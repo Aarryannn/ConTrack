@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ConTrac · Reminder Settings</title><link rel="stylesheet" href="settings.css"><script src="settings.js" defer></script>
+</head>
+<body>
+  <main class="settings-shell">
+    <header class="header">
+      <a class="back" href="popup.html" aria-label="Back to extension">←</a>
+      <div class="brand"><img src="icons/icon48.png" alt=""><div><div class="brand-name">ConTrac<span>.</span></div><div class="brand-caption">PREFERENCES & AUTOMATION</div></div></div>
+      <div class="header-chip"><i></i> SETTINGS</div>
+    </header>
+    <section class="intro">
+      <div class="kicker">MAKE EVERY CONTEST COUNT</div>
+      <h1>Your reminders.<br><em>Your rhythm.</em></h1>
+      <p>Choose reminder timing and delivery. You will only receive reminders for contests you explicitly select in the main schedule.</p>
+    </section>
+
+    <section class="panel">
+      <div class="panel-heading"><div><div class="step">01 / TIMING</div><h2>When should we remind you?</h2><p>Choose one or more intervals. You can combine presets with a custom reminder.</p></div><span class="panel-icon">◷</span></div>
+      <div class="interval-grid">
+        <label class="interval"><input type="checkbox" class="reminderInterval" value="5"><span class="interval-main">5 <small>MIN</small></span><span class="interval-desc">Last-minute check-in</span></label>
+        <label class="interval"><input type="checkbox" class="reminderInterval" value="10"><span class="interval-main">10 <small>MIN</small></span><span class="interval-desc">Quick preparation</span></label>
+        <label class="interval"><input type="checkbox" class="reminderInterval" value="60"><span class="interval-main">1 <small>HOUR</small></span><span class="interval-desc">Get set to compete</span></label>
+        <label class="interval"><input type="checkbox" class="reminderInterval" value="360"><span class="interval-main">6 <small>HOURS</small></span><span class="interval-desc">Plan your day</span></label>
+        <label class="interval"><input type="checkbox" class="reminderInterval" value="720"><span class="interval-main">12 <small>HOURS</small></span><span class="interval-desc">Prepare ahead</span></label>
+        <label class="interval"><input type="checkbox" class="reminderInterval" value="1440"><span class="interval-main">24 <small>HOURS</small></span><span class="interval-desc">A day-before heads-up</span></label>
+      </div>
+      <div class="custom-row"><div><h3>Custom interval</h3><p>Set a reminder in minutes, up to 28 days ahead.</p></div><div class="custom-input"><input id="customMinutes" type="number" min="1" max="40320" placeholder="30"><span>MIN</span></div></div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-heading"><div><div class="step">02 / DELIVERY</div><h2>Where should we reach you?</h2><p>Choose one or more destinations. Deselecting a contest or turning off a destination removes ConTrac-created Google items when Google is connected, and stops future reminders.</p></div><span class="panel-icon">↗</span></div>
+      <label class="delivery-option"><span class="delivery-icon orange">♢</span><span class="delivery-copy"><b>Chrome notifications</b><small>On-device reminders, even when the popup is closed.</small></span><span class="switch"><input id="chromeEnabled" type="checkbox"><i></i></span></label>
+      <label class="delivery-option"><span class="delivery-icon blue">▦</span><span class="delivery-copy"><b>Google Calendar</b><small>Create timed contest events with popup reminders.</small></span><span class="switch"><input id="calendarEnabled" type="checkbox"><i></i></span></label>
+      <label class="delivery-option"><span class="delivery-icon green">✓</span><span class="delivery-copy"><b>Google Tasks</b><small>Add a task with the contest date and a link to its timed Calendar event.</small></span><span class="switch"><input id="tasksEnabled" type="checkbox"><i></i></span></label>
+      <div class="info-note"><b>Good to know</b><span>Calendar creates timed popup alerts using your selected intervals. Tasks stores the contest due date and links to the Calendar event; Tasks itself cannot send exact-time reminders. Chrome reminders run independently on this device.</span></div>
+    </section>
+
+
+
+    <section class="panel google-account-panel">
+      <div class="panel-heading">
+        <div>
+          <div class="step">03 / GOOGLE ACCOUNT</div>
+          <h2>Google connection</h2>
+          <p>Disconnect clears ConTrac’s local connection and Chrome’s cached extension token. It does not sign you out of Google or revoke the app grant. To switch accounts, choose another Google account during authorization or use a separate Chrome profile.</p>
+        </div>
+        <span class="panel-icon">G</span>
+      </div>
+      <div class="account-row">
+        <div class="account-copy">
+          <b id="googleAccountStatus">Checking connection…</b>
+          <small id="googleAccountDetail">Your verified Google account and sync state will appear here.</small>
+        </div>
+        <div class="account-actions">
+          <button id="googleReconnectBtn" class="account-button">Connect Google</button>
+          <button id="googleDisconnectBtn" class="account-button secondary" disabled>Disconnect ConTrac</button>
+        </div>
+      </div>
+      <div class="account-meta"><span class="meta-dot"></span><span id="googleSyncSummary">Checking account and sync health…</span></div>
+      <div id="googleAccountMessage" class="demo-status" role="status" aria-live="polite"></div>
+    </section>
+
+    <section class="panel demo-panel">
+      <div class="panel-heading"><div><div class="step">04 / DELIVERY LAB</div><h2>Notification test centre</h2><p>Run an independent check for each enabled delivery channel. Results show what ConTrac actually created or requested, not just whether a button was clicked.</p></div><span class="panel-icon">⌁</span></div>
+      <div class="demo-intro-row"><div><b>Run a complete system check</b><small>Chrome is tested immediately. Calendar creates a timed test event with a one-minute popup alert. Tasks creates a temporary test task.</small></div><button id="demoNotificationBtn" class="demo-button">Run system check <span>→</span></button></div>
+      <div class="test-grid">
+        <article class="test-card" id="testChrome"><div class="test-card-top"><span class="test-symbol chrome-symbol">⌁</span><span class="test-state" id="testChromeState">NOT RUN</span></div><b>Chrome notifications</b><p id="testChromeDetail">Local notification delivery on this device.</p></article>
+        <article class="test-card" id="testCalendar"><div class="test-card-top"><span class="test-symbol calendar-symbol">▦</span><span class="test-state" id="testCalendarState">NOT RUN</span></div><b>Google Calendar</b><p id="testCalendarDetail">Timed event and popup reminder configuration.</p></article>
+        <article class="test-card" id="testTasks"><div class="test-card-top"><span class="test-symbol tasks-symbol">✓</span><span class="test-state" id="testTasksState">NOT RUN</span></div><b>Google Tasks</b><p id="testTasksDetail">Task-list write access and due-date creation.</p></article>
+      </div>
+      <div class="demo-foot"><span>Test items are clearly labelled <b>[ConTrac TEST]</b>.</span><button id="cleanupDemoBtn" class="cleanup-button">Clean up test items</button></div>
+      <div id="demoStatus" class="demo-status" role="status" aria-live="polite">No system check has been run yet.</div>
+      <div class="info-note"><b>How to interpret this test</b><span>Calendar can send timed popup alerts. Google Tasks stores due dates but has no exact-time reminder API. Chrome notifications are local to this browser profile. A successful API write confirms item creation, not that Google's device notification settings are enabled.</span></div>
+    </section>
+
+    <section class="save-bar"><div><div class="save-title">Ready when you are.</div><div class="save-subtitle" id="statusMessage">Your preferences are saved on this device.</div></div><button id="saveSettings">Save preferences <span>→</span></button></section>
+    <footer>CONTRAC <span>·</span> BUILT FOR THE NEXT CONTEST</footer>
+  </main>
+</body></html>

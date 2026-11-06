@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ConTrac</title>
+  <link rel="stylesheet" href="popup.css">
+  <script src="popup.js" defer></script>
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand">
+        <img src="icons/icon48.png" alt="ConTrac" class="brand-icon">
+        <div><div class="brand-name">ConTrac<span class="brand-dot">.</span></div><div class="brand-subtitle">Your contest command center</div></div>
+      </div>
+      <button id="settingsBtn" class="icon-button" aria-label="Reminder settings" title="Reminder settings">⚙</button>
+    </header>
+
+    <section class="hero-card">
+      <div class="hero-glow"></div>
+      <div class="eyebrow"><span class="live-dot"></span> CONTEST RADAR</div>
+      <div class="hero-row">
+        <div><div class="hero-number" id="contestCount">—</div><div class="hero-label">upcoming contests</div></div>
+        <div class="next-box"><div class="next-label">NEXT CONTEST IN</div><div class="next-time" id="nextCountdown">--:--:--</div></div>
+      </div>
+      <div class="hero-foot"><span>LeetCode</span><i></i><span>Codeforces</span><span class="hero-foot-spacer"></span><span id="syncLabel">Checking schedule…</span></div>
+    </section>
+
+    <section class="quick-actions">
+      <button id="googleConnectBtn" class="google-button">
+        <span class="google-mark">G</span><span id="googleButtonText">Connect Google</span><span class="button-arrow">↗</span>
+      </button>
+      <button id="refreshBtn" class="refresh-button" title="Refresh contests" aria-label="Refresh contests">↻</button>
+    </section>
+    <div class="section-heading"><div><h2>Upcoming schedule</h2><p>Your next opportunities to compete</p></div><span class="schedule-count" id="scheduleCount">0 EVENTS</span></div>
+    <label class="search-wrap"><span>⌕</span><input id="searchInput" type="search" placeholder="Search contests..."></label>
+    <nav class="filters" aria-label="Filter contests">
+      <button class="filterBtn active" data-filter="all">All contests</button>
+      <button class="filterBtn" data-filter="LeetCode">LeetCode</button>
+      <button class="filterBtn" data-filter="Codeforces">Codeforces</button>
+    </nav>
+    <main id="contestList" class="contest-list"><div class="loading-state">Loading your contest schedule…</div></main>
+    <footer class="footer">
+      <div class="footer-line"><span>Made with <b>♥</b> by Aryann</span><span>CONTRAC</span></div>
+      <div>Queries, feedback or bugs? <a href="mailto:arryann023@gmail.com">arryann023@gmail.com</a></div>
+    </footer>
+  </div>
+</body>
+</html>

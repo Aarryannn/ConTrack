@@ -1,0 +1,47 @@
+{
+  "manifest_version": 3,
+  "name": "ConTrac",
+  "short_name": "ConTrac",
+  "version": "1.3.0",
+  "description": "Track coding contests with reliable local reminders, verified Google account sync, and diagnostics.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAx9ppW6U6lMNPl/BwASoHWGv4S18tJP2oIHrLgnOSe+GUe2quR1Z7Zpmq09oQjb2Jwcr/yTh5pS5ed912FqDYxBpqNJlo9racyrfEMlmYsVccoBWDC42xge3oddzTBRKKy2dqrxsZjAjI0Sp+mXE6gMPWLPNbfQjzKAFf+Bb0nPPLpb4uDTFSq+18KyiiV3Q95LoNKMS9KqqtXGw824KSQ788Y3zy0HF5m4qeqIvKp5IpQefAw8veqs7xo/0uQxdbKqIMMLa6mTww4s5Cxs4GMXqpZPb8OpiyZMib8yQkDHKH8bguXwoUmu89a4ZuVPSoye0E7t0iBMq6/6ro/K94nQIDAQAB",
+  "permissions": [
+    "storage",
+    "alarms",
+    "notifications",
+    "identity",
+    "windows"
+  ],
+  "host_permissions": [
+    "https://codeforces.com/*",
+    "https://alfa-leetcode-api.onrender.com/*",
+    "https://www.googleapis.com/*",
+    "https://oauth2.googleapis.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "oauth2": {
+    "client_id": "590642488432-bdsi5r9ctvfkqfagphl93t5svemjjcen.apps.googleusercontent.com",
+    "scopes": [
+      "https://www.googleapis.com/auth/calendar.events",
+      "https://www.googleapis.com/auth/tasks",
+      "openid",
+      "https://www.googleapis.com/auth/userinfo.email"
+    ]
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "action": {
+    "default_title": "ConTrac",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    },
+    "default_popup": "popup.html"
+  }
+}
