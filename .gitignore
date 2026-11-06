@@ -30,3 +30,19 @@ niyan-private-key.pem
 generate-key.js
 .env
 .env.*
+
+
+
+
+
+
+
+>> git init -b main
+>> git add .
+>> git status
+>> git commit -m "Initial commit: ConTrac v1.3.0"
+>> git remote add origin https://github.com/Aarryannn/ConTrack         
+>> git push -u origin main
+
+
+
