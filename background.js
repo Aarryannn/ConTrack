@@ -1,11 +1,27 @@
 // ConTrac Manifest V3 service worker.
 // Handles scheduled Chrome notifications and Google Calendar / Tasks synchronization.
+// v1.3.3 — Cross-browser OAuth (launchWebAuthFlow + PKCE) + corrected IST contest start times.
 
 const CACHE_KEYS = ["cachedCodeforcesContests", "cachedLeetCodeContests"];
 const SETTINGS_KEY = "reminderSettings";
 const GOOGLE_STATE_KEY = "googleIntegration";
 const SYNCED_KEY = "googleSyncedContests";
 const SELECTED_KEY = "selectedContestReminders";
+
+// ============================================================
+// Google OAuth configuration (Web application client)
+// ============================================================
+const OAUTH_CLIENT_ID = '<your_client_id>';
+const OAUTH_CLIENT_SECRET = '<your_cleint_secret>'; // Google requires this for installed clients
+const OAUTH_SCOPES = [
+  'openid',
+  'https://www.googleapis.com/auth/userinfo.email',
+  'https://www.googleapis.com/auth/calendar.events',
+  'https://www.googleapis.com/auth/tasks'
+].join(' ');
+
+const TOKENS_KEY = "googleOAuthTokens";       // stored in chrome.storage.local
+const OAUTH_TEMP_KEY = "googleOAuthTemp";     // stored in chrome.storage.session
 
 const DEFAULT_SETTINGS = {
   intervals: [1440, 60, 10, 30],
@@ -30,41 +46,210 @@ function storageSet(values) {
     error ? reject(new Error(error.message)) : resolve();
   }));
 }
-function identityCall(method, options) {
-  return new Promise((resolve, reject) => {
-    const callback = result => {
-      const error = chrome.runtime.lastError;
-      error ? reject(new Error(error.message)) : resolve(result);
-    };
-    try {
-      if (options === undefined) chrome.identity[method](callback);
-      else chrome.identity[method](options, callback);
-    } catch (error) { reject(error); }
+function sessionGet(keys) {
+  return new Promise((resolve, reject) => chrome.storage.session.get(keys, result => {
+    const error = chrome.runtime.lastError;
+    error ? reject(new Error(error.message)) : resolve(result);
+  }));
+}
+function sessionSet(values) {
+  return new Promise((resolve, reject) => chrome.storage.session.set(values, () => {
+    const error = chrome.runtime.lastError;
+    error ? reject(new Error(error.message)) : resolve();
+  }));
+}
+function sessionRemove(keys) {
+  return new Promise((resolve, reject) => chrome.storage.session.remove(keys, () => {
+    const error = chrome.runtime.lastError;
+    error ? reject(new Error(error.message)) : resolve();
+  }));
+}
+
+// ============================================================
+// PKCE helpers
+// ============================================================
+function base64UrlEncode(bytes) {
+  let str = '';
+  const arr = new Uint8Array(bytes);
+  for (let i = 0; i < arr.length; i++) str += String.fromCharCode(arr[i]);
+  return btoa(str).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+async function sha256(str) {
+  return await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
+}
+function randomString(len = 64) {
+  const bytes = new Uint8Array(len);
+  crypto.getRandomValues(bytes);
+  return base64UrlEncode(bytes).slice(0, len);
+}
+
+// ============================================================
+// Timezone helpers — India Standard Time (+05:30)
+// ============================================================
+const IST_OFFSET_MINUTES = 330; // +05:30
+const IST_OFFSET_MS = IST_OFFSET_MINUTES * 60_000;
+
+// Cached contest.startTime values are stored 5h 30m behind true UTC epoch
+// because UTC strings without 'Z' were parsed as local IST when cached.
+function getContestStartMs(contest) {
+  return Number(contest.startTime) + IST_OFFSET_MS;
+}
+
+// Produces a calendar-ready dateTime with explicit +05:30 offset.
+function toIndiaISO(ms) {
+  const indiaMs = Number(ms) + IST_OFFSET_MS;
+  const d = new Date(indiaMs);
+  const pad = n => String(n).padStart(2, '0');
+  return (
+    `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}` +
+    `T${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}` +
+    `+05:30`
+  );
+}
+
+// Formats an RFC 3339 date-only due timestamp anchored to the IST calendar day.
+function toIndiaTaskDueISO(ms) {
+  const indiaMs = Number(ms) + IST_OFFSET_MS;
+  const d = new Date(indiaMs);
+  const pad = n => String(n).padStart(2, '0');
+  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}T00:00:00.000Z`;
+}
+
+// Formats a readable IST timestamp for Google Tasks notes.
+function formatIndiaDateTime(ms) {
+  return new Date(Number(ms)).toLocaleString('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    dateStyle: 'medium',
+    timeStyle: 'short'
   });
 }
-function getAuthToken(interactive = false) {
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    const timeout = setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      reject(new Error('Google authorization timed out. Check the OAuth client ID, extension ID, enabled APIs, consent-screen test user, and redirect configuration.'));
-    }, interactive ? 90_000 : 20_000);
-    try {
-      chrome.identity.getAuthToken({ interactive }, token => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timeout);
-        const error = chrome.runtime.lastError;
-        if (error) reject(new Error(error.message));
-        else if (!token) reject(new Error('Google returned no access token.'));
-        else resolve(token);
-      });
-    } catch (error) {
-      if (!settled) { settled = true; clearTimeout(timeout); reject(error); }
+
+// Kept for any non-calendar callers that still expect a plain ISO string.
+function iso(ms) {
+  return new Date(ms).toISOString();
+}
+
+// ============================================================
+// Token storage & refresh
+// ============================================================
+async function saveTokens(tokens) {
+  const expiresIn = Number(tokens.expires_in) || 3600;
+  const expiry = Date.now() + expiresIn * 1000 - 60_000;
+  await storageSet({
+    [TOKENS_KEY]: {
+      access_token: tokens.access_token,
+      refresh_token: tokens.refresh_token || null,
+      expiry,
+      scope: tokens.scope || OAUTH_SCOPES
     }
   });
 }
+async function getStoredTokens() {
+  const data = await storageGet(TOKENS_KEY);
+  return data[TOKENS_KEY] || null;
+}
+async function clearStoredTokens() {
+  await storageSet({ [TOKENS_KEY]: null });
+}
+
+async function getAuthToken(interactive = false) {
+  if (interactive) return await runInteractiveOAuth();
+
+  const t = await getStoredTokens();
+  if (!t) throw new Error('Not connected to Google. Click Connect in ConTrac.');
+  if (Date.now() < t.expiry) return t.access_token;
+  if (!t.refresh_token) {
+    await clearStoredTokens();
+    throw new Error('Google session expired. Please reconnect.');
+  }
+
+  const res = await fetchWithTimeout('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      client_id: OAUTH_CLIENT_ID,
+      client_secret: OAUTH_CLIENT_SECRET,
+      refresh_token: t.refresh_token,
+      grant_type: 'refresh_token'
+    })
+  }, 15000);
+
+  if (!res.ok) {
+    await clearStoredTokens();
+    const body = await res.text().catch(() => '');
+    throw new Error(`Google token refresh failed (${res.status}). Reconnect. ${body}`.trim());
+  }
+  const fresh = await res.json();
+  await saveTokens({ ...fresh, refresh_token: t.refresh_token });
+  return fresh.access_token;
+}
+
+async function runInteractiveOAuth() {
+  const redirectUri = chrome.identity.getRedirectURL(); // https://<id>.chromiumapp.org/
+  const state = randomString(32);
+  const verifier = randomString(64);
+  const challenge = base64UrlEncode(await sha256(verifier));
+
+  const url = new URL('https://accounts.google.com/o/oauth2/v2/auth');
+  url.searchParams.set('client_id', OAUTH_CLIENT_ID);
+  url.searchParams.set('redirect_uri', redirectUri);
+  url.searchParams.set('response_type', 'code');
+  url.searchParams.set('scope', OAUTH_SCOPES);
+  url.searchParams.set('access_type', 'offline');
+  url.searchParams.set('prompt', 'consent');
+  url.searchParams.set('state', state);
+  url.searchParams.set('code_challenge', challenge);
+  url.searchParams.set('code_challenge_method', 'S256');
+
+  await sessionSet({ [OAUTH_TEMP_KEY]: { state, verifier } });
+
+  const responseUrl = await new Promise((resolve, reject) => {
+    chrome.identity.launchWebAuthFlow(
+      { url: url.toString(), interactive: true },
+      resp => {
+        const err = chrome.runtime.lastError;
+        if (err) return reject(new Error(err.message));
+        if (!resp) return reject(new Error('Google authorization was cancelled.'));
+        resolve(resp);
+      }
+    );
+  });
+
+  const params = new URL(responseUrl).searchParams;
+  const returnedState = params.get('state');
+  const code = params.get('code');
+  const errorParam = params.get('error');
+
+  if (errorParam) throw new Error(`Google returned: ${errorParam}`);
+  if (!code) throw new Error('Google did not return an authorization code.');
+
+  const temp = (await sessionGet(OAUTH_TEMP_KEY))[OAUTH_TEMP_KEY];
+  if (!temp || returnedState !== temp.state) throw new Error('OAuth state mismatch (possible CSRF).');
+
+  const tokenRes = await fetchWithTimeout('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      client_id: OAUTH_CLIENT_ID,
+      client_secret: OAUTH_CLIENT_SECRET,
+      code,
+      code_verifier: temp.verifier,
+      grant_type: 'authorization_code',
+      redirect_uri: redirectUri
+    })
+  }, 20000);
+
+  if (!tokenRes.ok) {
+    const body = await tokenRes.text().catch(() => '');
+    throw new Error(`Google token exchange failed (${tokenRes.status}): ${body}`);
+  }
+
+  const tokens = await tokenRes.json();
+  await saveTokens(tokens);
+  await sessionRemove(OAUTH_TEMP_KEY);
+  return tokens.access_token;
+}
+
 async function getGoogleAccount(token) {
   const response = await fetchWithTimeout('https://www.googleapis.com/oauth2/v2/userinfo', {
     headers: { Authorization: `Bearer ${token}` }
@@ -81,7 +266,7 @@ function fetchWithTimeout(url, options = {}, timeoutMs = 15000) {
 async function getAllContests() {
   const data = await storageGet(CACHE_KEYS);
   return CACHE_KEYS.flatMap(key => Array.isArray(data[key]?.items) ? data[key].items : [])
-    .filter(c => c && c.id && c.name && Number.isFinite(Number(c.startTime)) && Number(c.startTime) > Date.now());
+    .filter(c => c && c.id && c.name && Number.isFinite(Number(c.startTime)) && getContestStartMs(c) > Date.now());
 }
 function contestFingerprint(contest) {
   return `${contest.id}|${contest.startTime}`;
@@ -127,8 +312,9 @@ async function scheduleChromeAlarms() {
 
   if (settings.chrome) {
     for (const contest of contests) {
+      const startMs = getContestStartMs(contest);
       for (const minutes of settings.intervals) {
-        const when = Number(contest.startTime) - minutes * 60_000;
+        const when = startMs - minutes * 60_000;
         if (when <= Date.now() + 1000) continue;
         const name = alarmName(contest.id, minutes);
         wanted.add(name);
@@ -225,7 +411,8 @@ async function runDemoCheck() {
         method: 'POST', body: JSON.stringify({
           summary: '[ConTrac TEST] Calendar reminder verification',
           description: 'Temporary ConTrac diagnostic event. It is safe to delete. This event tests timed Google Calendar popup reminders.',
-          start: { dateTime: iso(startAt) }, end: { dateTime: iso(startAt + 15 * 60_000) },
+          start: { dateTime: toIndiaISO(startAt) },
+          end:   { dateTime: toIndiaISO(startAt + 15 * 60_000) },
           reminders: { useDefault: false, overrides: [{ method: 'popup', minutes: 1 }] }
         })
       });
@@ -235,12 +422,10 @@ async function runDemoCheck() {
   }
   if (settings.tasks && token) {
     try {
-      const today = new Date();
-      const due = new Date(Date.UTC(today.getFullYear(), today.getMonth(), today.getDate(), 12));
       const task = await googleRequest('/tasks/v1/lists/@default/tasks', token, {
         method: 'POST', body: JSON.stringify({
           title: '[ConTrac TEST] Verify Google Tasks sync',
-          status: 'needsAction', due: due.toISOString(),
+          status: 'needsAction', due: toIndiaTaskDueISO(Date.now()),
           notes: 'Temporary ConTrac diagnostic task. This verifies task-list write access. Google Tasks API supports due dates, not precise timed reminders.'
         })
       });
@@ -296,7 +481,7 @@ async function googleRequest(path, token, options = {}) {
   const body = await response.json().catch(() => ({}));
   if (!response.ok) {
     if (response.status === 401) {
-      try { await identityCall("removeCachedAuthToken", { token }); } catch {}
+      await clearStoredTokens();
       const auth = await storageGet(GOOGLE_STATE_KEY).catch(() => ({}));
       if (auth[GOOGLE_STATE_KEY]?.connected) await storageSet({
         [GOOGLE_STATE_KEY]: { ...auth[GOOGLE_STATE_KEY], connected: false, authError: 'Google authorization expired. Reconnect your account.' },
@@ -307,15 +492,11 @@ async function googleRequest(path, token, options = {}) {
   }
   return body;
 }
-function iso(ms) {
-  return new Date(ms).toISOString();
-}
+
 async function createCalendarEvent(contest, token, settings, synced) {
   const fingerprint = contestFingerprint(contest);
-  const start = Number(contest.startTime);
+  const start = getContestStartMs(contest);
   const end = start + Math.max(30, Number(contest.duration) || 90) * 60_000;
-  // Calendar supports at most five popup overrides. Keep the five closest
-  // selected reminders, while Chrome alarms retain every selected interval.
   const overrides = [...new Set(settings.intervals)]
     .filter(minutes => Number.isInteger(minutes) && minutes > 0)
     .sort((a, b) => a - b)
@@ -325,8 +506,8 @@ async function createCalendarEvent(contest, token, settings, synced) {
   const event = {
     summary: `[${contest.platform}] ${contest.name}`,
     description: `Contest tracked by ConTrac.\nPlatform: ${contest.platform}\nContest: ${contest.url || ""}`,
-    start: { dateTime: iso(start) },
-    end: { dateTime: iso(end) },
+    start: { dateTime: toIndiaISO(start) },
+    end:   { dateTime: toIndiaISO(end) },
     reminders: { useDefault: false, overrides }
   };
 
@@ -367,18 +548,12 @@ async function createCalendarEvent(contest, token, settings, synced) {
 }
 async function createGoogleTask(contest, token, synced) {
   const fingerprint = contestFingerprint(contest);
-  // Google Tasks discards the time component of `due`. Use noon UTC on the
-  // contest's local calendar date to avoid the date shifting backwards when
-  // Google converts midnight in positive-offset time zones to UTC.
-  const contestDate = new Date(contest.startTime);
-  const due = new Date(Date.UTC(
-    contestDate.getFullYear(), contestDate.getMonth(), contestDate.getDate(), 12, 0, 0
-  ));
+  const start = getContestStartMs(contest);
   const task = {
     title: `[${contest.platform}] ${contest.name}`,
     status: "needsAction",
-    notes: `Contest starts at ${contestDate.toLocaleString()}.\nGoogle Tasks does not support time-of-day reminders. Use the timed Calendar event for alerts: ${synced[fingerprint]?.calendarEventUrl || "enable Google Calendar in ConTrac reminder settings"}.\nContest link: ${contest.url || ""}`,
-    due: due.toISOString()
+    notes: `Contest starts at ${formatIndiaDateTime(start)} IST.\nGoogle Tasks does not support time-of-day reminders. Use the timed Calendar event for alerts: ${synced[fingerprint]?.calendarEventUrl || "enable Google Calendar in ConTrac reminder settings"}.\nContest link: ${contest.url || ""}`,
+    due: toIndiaTaskDueISO(start)
   };
 
   const existingId = synced[fingerprint]?.taskId;
@@ -426,15 +601,13 @@ async function syncGoogleInner() {
   if (!liveState[GOOGLE_STATE_KEY]?.connected) return { calendarCreated: 0, tasksCreated: 0, errors: [], skipped: true };
   const account = await getGoogleAccount(token);
   if (liveState[GOOGLE_STATE_KEY].accountEmail && liveState[GOOGLE_STATE_KEY].accountEmail.toLowerCase() !== account.email.toLowerCase()) {
-    throw new Error('The cached Google token belongs to a different account than the connected account. Disconnect and reconnect the intended account.');
+    throw new Error('The stored Google token belongs to a different account than the connected account. Disconnect and reconnect the intended account.');
   }
   const selectionData = await storageGet(SELECTED_KEY);
   const selectedKeys = new Set(Array.isArray(selectionData[SELECTED_KEY]) ? selectionData[SELECTED_KEY] : []);
   const synced = stateData[SYNCED_KEY] || {};
   const errors = [];
 
-  // Remove only Google items whose IDs ConTrac previously created and whose
-  // contest the user has explicitly deselected.
   for (const [fingerprint, rawRecord] of Object.entries(synced)) {
     const record = rawRecord && typeof rawRecord === "object" ? rawRecord : {};
     synced[fingerprint] = record;
@@ -519,26 +692,22 @@ function refreshAll() {
   return refreshInFlight;
 }
 
-async function clearCachedGoogleTokens() {
-  await identityCall('clearAllCachedAuthTokens');
-}
 async function disconnectGoogleAccount() {
-  // Disconnect is intentionally local and immediate. Google consent is not revoked
-  // here; Chrome's cached extension tokens are cleared. The user can revoke the
-  // OAuth grant separately in their Google Account security settings.
   const previous = await storageGet(GOOGLE_STATE_KEY);
   const previousState = previous[GOOGLE_STATE_KEY] || {};
+  const tokens = await getStoredTokens();
+  await clearStoredTokens();
   await storageSet({
     [GOOGLE_STATE_KEY]: { connected: false, disconnectedAt: Date.now(), accountEmail: null, accountName: null, lastAccountEmail: previousState.accountEmail || previousState.lastAccountEmail || null },
     googleSyncStatus: { completedAt: Date.now(), disconnected: true, errors: [] }
   });
   const warnings = [];
-  try {
-    await Promise.race([
-      clearCachedGoogleTokens(),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('Chrome token-cache cleanup timed out.')), 5000))
-    ]);
-  } catch (error) { warnings.push(error.message); }
+  if (tokens?.access_token) {
+    try {
+      const res = await fetchWithTimeout(`https://oauth2.googleapis.com/revoke?token=${encodeURIComponent(tokens.access_token)}`, { method: 'POST' }, 5000);
+      if (!res.ok) warnings.push(`Google revoke returned ${res.status}`);
+    } catch (error) { warnings.push(`Google revoke: ${error.message}`); }
+  }
   await storageSet({
     googleSyncStatus: { completedAt: Date.now(), disconnected: true, errors: warnings }
   });
@@ -598,15 +767,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       const account = await getGoogleAccount(token);
       const previousState = (await storageGet(GOOGLE_STATE_KEY))[GOOGLE_STATE_KEY] || {};
       if (previousState.lastAccountEmail && previousState.lastAccountEmail.toLowerCase() !== account.email.toLowerCase()) {
-        // The sync ledger contains Google resource IDs from a different account.
-        // Do not send those IDs to the newly authenticated account.
         await storageSet({ [SYNCED_KEY]: {} });
       }
       await storageSet({
         [GOOGLE_STATE_KEY]: { connected: true, connectedAt: Date.now(), lastAuthCheck: Date.now(), accountEmail: account.email, accountName: account.name, lastAccountEmail: account.email },
         googleSyncStatus: { startedAt: Date.now(), status: 'syncing', errors: [] }
       });
-      // Respond only after identity verification. Sync is separately tracked and reflected in all views.
       syncGoogle().catch(error => console.error('ConTrac Google sync failed:', error));
       return { success: true, authenticated: true, account, message: `Connected as ${account.email}. Initial sync started.` };
     }

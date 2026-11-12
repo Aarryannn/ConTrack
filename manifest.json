@@ -21,15 +21,6 @@
   "background": {
     "service_worker": "background.js"
   },
-  "oauth2": {
-    "client_id": "590642488432-bdsi5r9ctvfkqfagphl93t5svemjjcen.apps.googleusercontent.com",
-    "scopes": [
-      "https://www.googleapis.com/auth/calendar.events",
-      "https://www.googleapis.com/auth/tasks",
-      "openid",
-      "https://www.googleapis.com/auth/userinfo.email"
-    ]
-  },
   "icons": {
     "16": "icons/icon16.png",
     "48": "icons/icon48.png",
