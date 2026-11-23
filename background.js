@@ -1,6 +1,6 @@
 // ConTrac Manifest V3 service worker.
 // Handles scheduled Chrome notifications and Google Calendar / Tasks synchronization.
-// v1.3.3 — Cross-browser OAuth (launchWebAuthFlow + PKCE) + corrected IST contest start times.
+// v1.3.4 — Cross-browser OAuth (launchWebAuthFlow + PKCE) + fixed UTC/IST contest start times.
 
 const CACHE_KEYS = ["cachedCodeforcesContests", "cachedLeetCodeContests"];
 const SETTINGS_KEY = "reminderSettings";
@@ -11,17 +11,17 @@ const SELECTED_KEY = "selectedContestReminders";
 // ============================================================
 // Google OAuth configuration (Web application client)
 // ============================================================
-const OAUTH_CLIENT_ID = '<your_client_id>';
-const OAUTH_CLIENT_SECRET = '<your_cleint_secret>'; // Google requires this for installed clients
+const CLIENT_ID = "your-google-client-id";
+const CLIENT_SECRET = "your-google-client-secret";
 const OAUTH_SCOPES = [
   'openid',
-  'https://www.googleapis.com/auth/userinfo.email',
+  'https://www.googleapis.com/auth/userinfo.email',     
   'https://www.googleapis.com/auth/calendar.events',
   'https://www.googleapis.com/auth/tasks'
 ].join(' ');
 
-const TOKENS_KEY = "googleOAuthTokens";       // stored in chrome.storage.local
-const OAUTH_TEMP_KEY = "googleOAuthTemp";     // stored in chrome.storage.session
+const TOKENS_KEY = "googleOAuthTokens";       
+const OAUTH_TEMP_KEY = "googleOAuthTemp";      
 
 const DEFAULT_SETTINGS = {
   intervals: [1440, 60, 10, 30],
@@ -89,13 +89,23 @@ function randomString(len = 64) {
 const IST_OFFSET_MINUTES = 330; // +05:30
 const IST_OFFSET_MS = IST_OFFSET_MINUTES * 60_000;
 
-// Cached contest.startTime values are stored 5h 30m behind true UTC epoch
-// because UTC strings without 'Z' were parsed as local IST when cached.
+// Returns the true UTC epoch timestamp in milliseconds without double-shifting IST.
 function getContestStartMs(contest) {
-  return Number(contest.startTime) + IST_OFFSET_MS;
+  const raw = contest?.startTime;
+  if (raw == null) return NaN;
+  if (typeof raw === "number" || /^\d+$/.test(String(raw))) {
+    const num = Number(raw);
+    // Normalize seconds to milliseconds if a 10-digit Unix timestamp is passed
+    return num < 1e11 ? num * 1000 : num;
+  }
+  const str = String(raw).trim();
+  // If an ISO-like date string lacks an explicit timezone offset, treat it as UTC
+  const hasTimezone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(str);
+  const parsed = Date.parse(hasTimezone ? str : `${str}Z`);
+  return Number.isFinite(parsed) ? parsed : NaN;
 }
 
-// Produces a calendar-ready dateTime with explicit +05:30 offset.
+// Produces a calendar-ready dateTime with explicit +05:30 offset from a true UTC epoch ms.
 function toIndiaISO(ms) {
   const indiaMs = Number(ms) + IST_OFFSET_MS;
   const d = new Date(indiaMs);
@@ -258,19 +268,27 @@ async function getGoogleAccount(token) {
   if (!response.ok || !body.email) throw new Error(body.error?.message || 'Could not verify the Google account email. Check the userinfo.email OAuth scope.');
   return { email: body.email, name: body.name || body.email, picture: body.picture || null };
 }
+
 function fetchWithTimeout(url, options = {}, timeoutMs = 15000) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   return fetch(url, { ...options, signal: controller.signal }).finally(() => clearTimeout(timer));
 }
+
 async function getAllContests() {
   const data = await storageGet(CACHE_KEYS);
   return CACHE_KEYS.flatMap(key => Array.isArray(data[key]?.items) ? data[key].items : [])
-    .filter(c => c && c.id && c.name && Number.isFinite(Number(c.startTime)) && getContestStartMs(c) > Date.now());
+    .filter(c => {
+      if (!c || !c.id || !c.name) return false;
+      const startMs = getContestStartMs(c);
+      return Number.isFinite(startMs) && startMs > Date.now();
+    });
 }
+
 function contestFingerprint(contest) {
-  return `${contest.id}|${contest.startTime}`;
+  return `${contest.id}|${getContestStartMs(contest)}`;
 }
+
 async function getSelectedContests() {
   const [contests, selection] = await Promise.all([
     getAllContests(),
@@ -279,12 +297,13 @@ async function getSelectedContests() {
   const selected = new Set(Array.isArray(selection[SELECTED_KEY]) ? selection[SELECTED_KEY] : []);
   return contests.filter(contest => selected.has(contestFingerprint(contest)));
 }
+
 async function getSettings() {
   const data = await storageGet(SETTINGS_KEY);
   const saved = data[SETTINGS_KEY] || {};
   return {
     intervals: [...new Set((Array.isArray(saved.intervals) ? saved.intervals : DEFAULT_SETTINGS.intervals)
-      .map(Number).filter(n => Number.isInteger(n) && n > 0 && n <= 40320))].sort((a,b) => b-a),
+      .map(Number).filter(n => Number.isInteger(n) && n > 0 && n <= 40320))].sort((a, b) => b - a),
     chrome: saved.chrome !== false,
     calendar: saved.calendar !== false,
     tasks: saved.tasks !== false
@@ -304,6 +323,7 @@ function createChromeNotification(id, options) {
 function alarmName(contestId, minutes) {
   return `${ALARM_PREFIX}${minutes}:${encodeURIComponent(contestId)}`;
 }
+
 async function scheduleChromeAlarms() {
   const settings = await getSettings();
   const contests = await getSelectedContests();
@@ -337,6 +357,7 @@ async function scheduleChromeAlarms() {
     }
   });
 }
+
 async function showReminder(contestId, minutes) {
   const settings = await getSettings();
   if (!settings.chrome) return;
@@ -356,7 +377,6 @@ async function showReminder(contestId, minutes) {
   });
 }
 
-
 const DEMO_GOOGLE_KEY = "demoGoogleArtifacts";
 async function removePreviousDemoGoogleArtifacts(token) {
   const data = await storageGet(DEMO_GOOGLE_KEY);
@@ -373,6 +393,7 @@ async function removePreviousDemoGoogleArtifacts(token) {
   await storageSet({ [DEMO_GOOGLE_KEY]: {} });
   return errors;
 }
+
 async function runDemoCheck() {
   await chrome.alarms.clear(DEMO_ALARM);
   const settings = await getSettings();
@@ -397,7 +418,9 @@ async function runDemoCheck() {
       token = await getAuthToken(false);
       account = await getGoogleAccount(token);
     } catch (error) {
-      for (const key of ['calendar','tasks']) if (state.checks[key].enabled) state.checks[key] = { ...state.checks[key], status: 'failed', detail: error.message };
+      for (const key of ['calendar', 'tasks']) {
+        if (state.checks[key].enabled) state.checks[key] = { ...state.checks[key], status: 'failed', detail: error.message };
+      }
       token = null;
     }
   }
@@ -416,7 +439,13 @@ async function runDemoCheck() {
           reminders: { useDefault: false, overrides: [{ method: 'popup', minutes: 1 }] }
         })
       });
-      state.checks.calendar = { enabled: true, status: 'passed', detail: `Test event created for ${new Date(startAt).toLocaleTimeString()}; Google popup alert configured 1 minute before.${cleanupErrors.length ? ` Previous demo cleanup warnings: ${cleanupErrors.join(' | ')}` : ''}`, eventId: event.id, eventUrl: event.htmlLink };
+      state.checks.calendar = {
+        enabled: true,
+        status: 'passed',
+        detail: `Test event created for ${new Date(startAt).toLocaleTimeString()}; Google popup alert configured 1 minute before.${cleanupErrors.length ? ` Previous demo cleanup warnings: ${cleanupErrors.join(' | ')}` : ''}`,
+        eventId: event.id,
+        eventUrl: event.htmlLink
+      };
       state.calendarEventId = event.id;
     } catch (error) { state.checks.calendar = { enabled: true, status: 'failed', detail: error.message }; }
   }
@@ -425,7 +454,8 @@ async function runDemoCheck() {
       const task = await googleRequest('/tasks/v1/lists/@default/tasks', token, {
         method: 'POST', body: JSON.stringify({
           title: '[ConTrac TEST] Verify Google Tasks sync',
-          status: 'needsAction', due: toIndiaTaskDueISO(Date.now()),
+          status: 'needsAction',
+          due: toIndiaTaskDueISO(Date.now()),
           notes: 'Temporary ConTrac diagnostic task. This verifies task-list write access. Google Tasks API supports due dates, not precise timed reminders.'
         })
       });
@@ -456,6 +486,7 @@ async function runDemoCheck() {
   });
   return { success: true, state };
 }
+
 async function cleanupDemoArtifacts() {
   const data = await storageGet([DEMO_GOOGLE_KEY, GOOGLE_STATE_KEY]);
   const artifacts = data[DEMO_GOOGLE_KEY] || {};
@@ -546,6 +577,7 @@ async function createCalendarEvent(contest, token, settings, synced) {
   await storageSet({ [SYNCED_KEY]: synced });
   return true;
 }
+
 async function createGoogleTask(contest, token, synced) {
   const fingerprint = contestFingerprint(contest);
   const start = getContestStartMs(contest);
@@ -580,6 +612,7 @@ async function createGoogleTask(contest, token, synced) {
   await storageSet({ [SYNCED_KEY]: synced });
   return true;
 }
+
 async function deleteGoogleResource(path, token) {
   const response = await fetch(`https://www.googleapis.com${path}`, {
     method: "DELETE",
@@ -655,7 +688,6 @@ async function syncGoogleInner() {
   await storageSet({ [SYNCED_KEY]: synced });
   return { calendarCreated, tasksCreated, errors };
 }
-
 
 let googleSyncInFlight = null;
 function syncGoogle() {
